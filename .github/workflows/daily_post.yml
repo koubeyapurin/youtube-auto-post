@@ -1,0 +1,49 @@
+name: Daily YouTube Auto-Post
+
+on:
+  schedule:
+    - cron: '30 13 * * *'   # UTC 13:30 = JST 22:30
+  workflow_dispatch:         # 手動実行ボタンも有効にする
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y ffmpeg cmake ninja-build build-essential \
+            libssl-dev pkg-config
+
+      # FetchContent（libcurl・json）のダウンロードをキャッシュ
+      - name: Cache CMake build
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: cmake-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: cmake-${{ runner.os }}-
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      # シークレットからクレデンシャルファイルを生成
+      - name: Write credential files
+        env:
+          CLIENT_SECRET_JSON: ${{ secrets.CLIENT_SECRET_JSON }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: |
+          echo "$CLIENT_SECRET_JSON" > client_secret.json
+          printf '{"access_token":"","refresh_token":"%s"}' \
+            "$YOUTUBE_REFRESH_TOKEN" > token.json
+
+      - name: Run pipeline
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: ./build/test_gemini
