@@ -18,8 +18,8 @@ GEMINI_MODEL = "gemini-2.5-flash"
 VEO_MODEL = "veo-2.0-generate-001"
 LYRIA_MODEL = "lyria-3-clip-preview"
 OUTPUT_FILE = "temp_video.mp4"
-RAW_VIDEO    = "temp_raw.mp4"
-TEMP_AUDIO   = "temp_audio.mp3"
+RAW_VIDEO   = "temp_raw.mp4"
+TEMP_AUDIO  = "temp_audio"  # 拡張子はレスポンスの mime_type から決定
 POLL_INTERVAL = 20
 
 DRIVE_TOKEN_FILE = "token_drive.json"
@@ -87,7 +87,8 @@ def generate_video(client: genai.Client, prompt: str) -> bytes:
 
 # ── Lyria: BGM generation ────────────────────────────────────────────────────
 
-def generate_bgm(client: genai.Client, animal: str) -> bytes:
+def generate_bgm(client: genai.Client, animal: str) -> tuple[bytes, str]:
+    """Returns (audio_bytes, mime_type)."""
     print("Generating BGM with Lyria 3...")
     prompt = (
         f"Upbeat, joyful Indian music with tabla and sitar. "
@@ -99,19 +100,28 @@ def generate_bgm(client: genai.Client, animal: str) -> bytes:
         contents=prompt,
         config=types.GenerateContentConfig(
             response_modalities=["AUDIO"],
-            response_mime_type="audio/mp3",
         ),
     )
-    return base64.b64decode(response.candidates[0].content.parts[0].inline_data.data)
+    part = response.candidates[0].content.parts[0]
+    return base64.b64decode(part.inline_data.data), part.inline_data.mime_type
 
 
-def compose_with_bgm(video_path: str, audio_path: str, output_path: str) -> None:
-    print("Composing video with BGM (FFmpeg)...")
+def compose_with_bgm(video_path: str, audio_path: str, mime_type: str, output_path: str) -> None:
+    print(f"Composing video with BGM (FFmpeg) — audio: {mime_type}...")
+
+    # audio/L16 は raw PCM なので FFmpeg にフォーマットを明示する
+    if "L16" in mime_type or "pcm" in mime_type.lower():
+        rate = "44100"
+        for seg in mime_type.split(";"):
+            if "rate=" in seg:
+                rate = seg.split("=")[1].strip()
+        audio_flags = ["-f", "s16le", "-ar", rate, "-ac", "1",
+                       "-stream_loop", "-1", "-i", audio_path]
+    else:
+        audio_flags = ["-stream_loop", "-1", "-i", audio_path]
+
     subprocess.run(
-        [
-            "ffmpeg", "-y",
-            "-i", video_path,
-            "-stream_loop", "-1", "-i", audio_path,
+        ["ffmpeg", "-y", "-i", video_path] + audio_flags + [
             "-c:v", "copy",
             "-c:a", "aac", "-b:a", "192k",
             "-shortest",
@@ -170,16 +180,17 @@ def main() -> None:
         f.write(video_bytes)
 
     try:
-        audio_bytes = generate_bgm(client, animal)
-        with open(TEMP_AUDIO, "wb") as f:
+        audio_bytes, mime_type = generate_bgm(client, animal)
+        ext = ".wav" if ("L16" in mime_type or "pcm" in mime_type.lower()) else ".mp3"
+        audio_path = TEMP_AUDIO + ext
+        with open(audio_path, "wb") as f:
             f.write(audio_bytes)
-        compose_with_bgm(RAW_VIDEO, TEMP_AUDIO, OUTPUT_FILE)
-        os.unlink(TEMP_AUDIO)
+        compose_with_bgm(RAW_VIDEO, audio_path, mime_type, OUTPUT_FILE)
+        os.unlink(audio_path)
+        os.unlink(RAW_VIDEO)
     except Exception as e:
         print(f"BGM skipped ({e}) — uploading video without audio.")
         os.replace(RAW_VIDEO, OUTPUT_FILE)
-    else:
-        os.unlink(RAW_VIDEO)
 
     size_mb = os.path.getsize(OUTPUT_FILE) / 1024 / 1024
     print(f"Saved locally: {OUTPUT_FILE} ({size_mb:.1f} MB)\n")
