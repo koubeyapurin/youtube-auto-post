@@ -1,8 +1,10 @@
+import base64
 import os
 import re
 import sys
 import json
 import time
+import subprocess
 from datetime import datetime
 from google import genai
 from google.genai import types
@@ -14,7 +16,10 @@ from drive_to_youtube import folder_id as drive_folder_id
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-2.5-flash"
 VEO_MODEL = "veo-2.0-generate-001"
+LYRIA_MODEL = "lyria-3-clip-preview"
 OUTPUT_FILE = "temp_video.mp4"
+RAW_VIDEO    = "temp_raw.mp4"
+TEMP_AUDIO   = "temp_audio.mp3"
 POLL_INTERVAL = 20
 
 DRIVE_TOKEN_FILE = "token_drive.json"
@@ -80,6 +85,43 @@ def generate_video(client: genai.Client, prompt: str) -> bytes:
     return client.files.download(file=video_file)
 
 
+# ── Lyria: BGM generation ────────────────────────────────────────────────────
+
+def generate_bgm(client: genai.Client, animal: str) -> bytes:
+    print("Generating BGM with Lyria 3...")
+    prompt = (
+        f"Upbeat, joyful Indian music with tabla and sitar. "
+        f"Energetic and fun, perfect for a viral short video featuring a {animal}. "
+        f"30 seconds, no vocals."
+    )
+    response = client.models.generate_content(
+        model=LYRIA_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
+            response_mime_type="audio/mp3",
+        ),
+    )
+    return base64.b64decode(response.candidates[0].content.parts[0].inline_data.data)
+
+
+def compose_with_bgm(video_path: str, audio_path: str, output_path: str) -> None:
+    print("Composing video with BGM (FFmpeg)...")
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-stream_loop", "-1", "-i", audio_path,
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest",
+            output_path,
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
 # ── Google Drive upload ──────────────────────────────────────────────────────
 
 def upload_to_drive(local_path: str, animal: str) -> str:
@@ -124,8 +166,20 @@ def main() -> None:
     prompt, animal = generate_prompt(client)
     video_bytes = generate_video(client, prompt)
 
-    with open(OUTPUT_FILE, "wb") as f:
+    with open(RAW_VIDEO, "wb") as f:
         f.write(video_bytes)
+
+    try:
+        audio_bytes = generate_bgm(client, animal)
+        with open(TEMP_AUDIO, "wb") as f:
+            f.write(audio_bytes)
+        compose_with_bgm(RAW_VIDEO, TEMP_AUDIO, OUTPUT_FILE)
+        os.unlink(TEMP_AUDIO)
+    except Exception as e:
+        print(f"BGM skipped ({e}) — uploading video without audio.")
+        os.replace(RAW_VIDEO, OUTPUT_FILE)
+    else:
+        os.unlink(RAW_VIDEO)
 
     size_mb = os.path.getsize(OUTPUT_FILE) / 1024 / 1024
     print(f"Saved locally: {OUTPUT_FILE} ({size_mb:.1f} MB)\n")
