@@ -1,0 +1,51 @@
+name: Daily YouTube Upload (Drive → YouTube)
+
+# 毎日 22:30 JST = 13:30 UTC
+on:
+  schedule:
+    - cron: "30 13 * * *"
+  workflow_dispatch:      # 手動実行ボタン
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # ── 1. ソース取得 ──────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. Python セットアップ ─────────────────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"           # requirements.txt が変わるまでキャッシュ
+
+      # ── 3. 依存ライブラリのインストール ───────────────────────────────
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ── 4. Drive → YouTube アップロード ───────────────────────────────
+      - name: Upload from Drive to YouTube
+        env:
+          # Google Drive 認証トークン（JSON文字列）
+          DRIVE_TOKEN_JSON:          ${{ secrets.DRIVE_TOKEN_JSON }}
+          # YouTube 認証トークン（JSON文字列）
+          YOUTUBE_TOKEN_JSON:        ${{ secrets.YOUTUBE_TOKEN_JSON }}
+          # OAuth クライアント設定（client_secret.json の内容）
+          GOOGLE_CLIENT_SECRET_JSON: ${{ secrets.GOOGLE_CLIENT_SECRET_JSON }}
+          # トークン更新時に Secret を自動上書きするための PAT
+          GH_PAT:                    ${{ secrets.GH_PAT }}
+          # GITHUB_REPOSITORY は Actions が自動でセット (owner/repo)
+        run: python drive_to_youtube.py
+
+      # ── 5. 失敗時のログ保存（任意） ────────────────────────────────────
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-log-${{ github.run_id }}
+          path: "*.log"
+          retention-days: 7

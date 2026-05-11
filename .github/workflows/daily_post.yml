@@ -1,49 +1,41 @@
-name: Daily YouTube Auto-Post
+name: Daily Video Generation (Veo → Drive)
 
+# 毎日 20:00 JST = 11:00 UTC（YouTube 投稿の 2.5 時間前に生成しておく）
 on:
   schedule:
-    - cron: '30 13 * * *'   # UTC 13:30 = JST 22:30
-  workflow_dispatch:         # 手動実行ボタンも有効にする
+    - cron: "0 11 * * *"
+  workflow_dispatch:
 
 jobs:
-  post:
+  generate:
     runs-on: ubuntu-latest
+    timeout-minutes: 30    # Veo の生成は最大 10 分程度
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y ffmpeg cmake ninja-build build-essential \
-            libssl-dev pkg-config
-
-      # FetchContent（libcurl・json）のダウンロードをキャッシュ
-      - name: Cache CMake build
-        uses: actions/cache@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          path: build
-          key: cmake-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
-          restore-keys: cmake-${{ runner.os }}-
+          python-version: "3.12"
+          cache: "pip"
 
-      - name: Configure
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Install dependencies
+        run: pip install -r requirements.txt
 
-      - name: Build
-        run: cmake --build build --parallel
-
-      # シークレットからクレデンシャルファイルを生成
-      - name: Write credential files
+      - name: Generate video and save to Drive
         env:
-          CLIENT_SECRET_JSON: ${{ secrets.CLIENT_SECRET_JSON }}
-          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-        run: |
-          echo "$CLIENT_SECRET_JSON" > client_secret.json
-          printf '{"access_token":"","refresh_token":"%s"}' \
-            "$YOUTUBE_REFRESH_TOKEN" > token.json
+          GEMINI_API_KEY:            ${{ secrets.GEMINI_API_KEY }}
+          DRIVE_TOKEN_JSON:          ${{ secrets.DRIVE_TOKEN_JSON }}
+          GOOGLE_CLIENT_SECRET_JSON: ${{ secrets.GOOGLE_CLIENT_SECRET_JSON }}
+          GH_PAT:                    ${{ secrets.GH_PAT }}
+        run: python generate_video.py
 
-      - name: Run pipeline
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: ./build/test_gemini
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-log-${{ github.run_id }}
+          path: "*.log"
+          retention-days: 7
