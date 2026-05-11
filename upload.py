@@ -32,7 +32,7 @@ def upload_video(youtube, file_path: str, title: str, description: str = "", tag
             "categoryId": "22",  # People & Blogs
         },
         "status": {
-            "privacyStatus": "private",
+            "privacyStatus": "public",
         },
     }
 
