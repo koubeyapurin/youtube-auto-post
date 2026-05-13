@@ -48,4 +48,5 @@ jobs:
         with:
           name: failure-log-${{ github.run_id }}
           path: "*.log"
+          if-no-files-found: ignore
           retention-days: 7
