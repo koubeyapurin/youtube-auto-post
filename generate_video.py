@@ -175,9 +175,10 @@ def main() -> None:
             "Error: LUMAAI_API_KEY is not set.\n"
             "Get your key from https://lumalabs.ai/dream-machine/api"
         )
+    print(f"LUMAAI_API_KEY length: {len(LUMAAI_API_KEY)}, prefix: {LUMAAI_API_KEY[:8]}...")
 
     gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-    luma_client = LumaAI(auth_token=LUMAAI_API_KEY)
+    luma_client = LumaAI()  # LUMAAI_API_KEY を環境変数から自動読み込み
 
     prompt, animal = generate_prompt(gemini_client)
     video_bytes = generate_video(luma_client, prompt)
