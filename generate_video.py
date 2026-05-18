@@ -68,7 +68,6 @@ def generate_video(client: genai.Client, prompt: str) -> bytes:
             number_of_videos=1,
             duration_seconds=8,
             enhance_prompt=True,
-            aspect_ratio="9:16",
         ),
     )
 
@@ -123,11 +122,25 @@ def compose_with_bgm(video_path: str, audio_path: str, mime_type: str, output_pa
 
     subprocess.run(
         ["ffmpeg", "-y", "-i", video_path] + audio_flags + [
-            "-c:v", "copy",
+            "-vf", "crop=ih*9/16:ih,scale=1080:1920",
+            "-c:v", "libx264", "-crf", "18", "-preset", "fast",
             "-c:a", "aac", "-b:a", "192k",
             "-shortest",
             output_path,
         ],
+        check=True,
+        capture_output=True,
+    )
+
+
+def convert_to_vertical(input_path: str, output_path: str) -> None:
+    print("Converting to vertical 9:16 (FFmpeg)...")
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", input_path,
+         "-vf", "crop=ih*9/16:ih,scale=1080:1920",
+         "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+         "-an",
+         output_path],
         check=True,
         capture_output=True,
     )
@@ -191,7 +204,8 @@ def main() -> None:
         os.unlink(RAW_VIDEO)
     except Exception as e:
         print(f"BGM skipped ({e}) — uploading video without audio.")
-        os.replace(RAW_VIDEO, OUTPUT_FILE)
+        convert_to_vertical(RAW_VIDEO, OUTPUT_FILE)
+        os.unlink(RAW_VIDEO)
 
     size_mb = os.path.getsize(OUTPUT_FILE) / 1024 / 1024
     print(f"Saved locally: {OUTPUT_FILE} ({size_mb:.1f} MB)\n")
