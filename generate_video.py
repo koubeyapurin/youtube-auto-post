@@ -18,7 +18,7 @@ from drive_to_youtube import folder_id as drive_folder_id
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 LUMAAI_API_KEY = os.environ.get("LUMAAI_API_KEY", "")
 GEMINI_MODEL = "gemini-2.5-flash"
-LUMA_MODEL = "ray-2"
+LUMA_MODEL = "dream-machine"
 LYRIA_MODEL = "lyria-3-clip-preview"
 OUTPUT_FILE = "temp_video.mp4"
 RAW_VIDEO   = "temp_raw.mp4"
