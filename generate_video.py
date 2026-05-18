@@ -79,6 +79,7 @@ def generate_video(prompt: str) -> bytes:
         json={"prompt": prompt, "aspect_ratio": "9:16", "model": LUMA_MODEL},
         timeout=30,
     )
+    print(f"  LUMA response {resp.status_code}: {resp.text}")
     resp.raise_for_status()
     generation_id = resp.json()["id"]
 
