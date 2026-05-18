@@ -1,4 +1,4 @@
-name: Daily Video Generation (Veo → Drive)
+name: Daily Video Generation (LUMA → Drive)
 
 # 毎日 20:00 JST = 11:00 UTC（YouTube 投稿の 2.5 時間前に生成しておく）
 on:
@@ -30,6 +30,7 @@ jobs:
       - name: Generate video and save to Drive
         env:
           GEMINI_API_KEY:            ${{ secrets.GEMINI_API_KEY }}
+          LUMAAI_API_KEY:            ${{ secrets.LUMAAI_API_KEY }}
           DRIVE_TOKEN_JSON:          ${{ secrets.DRIVE_TOKEN_JSON }}
           GOOGLE_CLIENT_SECRET_JSON: ${{ secrets.GOOGLE_CLIENT_SECRET_JSON }}
           GH_PAT:                    ${{ secrets.GH_PAT }}
@@ -41,5 +42,4 @@ jobs:
         with:
           name: failure-log-${{ github.run_id }}
           path: "*.log"
-          if-no-files-found: ignore
           retention-days: 7

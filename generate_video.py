@@ -10,12 +10,15 @@ from google import genai
 from google.genai import types
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+import requests
+from lumaai import LumaAI
 import auth
 from drive_to_youtube import folder_id as drive_folder_id
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+LUMAAI_API_KEY = os.environ.get("LUMAAI_API_KEY", "")
 GEMINI_MODEL = "gemini-2.5-flash"
-VEO_MODEL = "veo-2.0-generate-001"
+LUMA_MODEL = "ray-2"
 LYRIA_MODEL = "lyria-3-clip-preview"
 OUTPUT_FILE = "temp_video.mp4"
 RAW_VIDEO   = "temp_raw.mp4"
@@ -59,30 +62,27 @@ def generate_prompt(client: genai.Client) -> tuple[str, str]:
 
 # ── Veo: video generation ────────────────────────────────────────────────────
 
-def generate_video(client: genai.Client, prompt: str) -> bytes:
-    print("Submitting video generation request to Veo...")
-    operation = client.models.generate_videos(
-        model=VEO_MODEL,
+def generate_video(client: LumaAI, prompt: str) -> bytes:
+    print("Submitting video generation request to LUMA...")
+    generation = client.generations.create(
         prompt=prompt,
-        config=types.GenerateVideosConfig(
-            number_of_videos=1,
-            duration_seconds=8,
-            enhance_prompt=True,
-        ),
+        aspect_ratio="9:16",
+        model=LUMA_MODEL,
     )
 
-    print("Waiting for video generation (typically 2–5 minutes)...")
-    while not operation.done:
+    print("Waiting for video generation...")
+    while generation.state not in ("completed", "failed"):
         time.sleep(POLL_INTERVAL)
-        operation = client.operations.get(operation)
-        print("  Still generating...")
+        generation = client.generations.get(id=generation.id)
+        print(f"  State: {generation.state}")
 
-    if not operation.response.generated_videos:
-        raise RuntimeError("Generation completed but no video was returned")
+    if generation.state == "failed":
+        raise RuntimeError(f"LUMA generation failed: {generation.failure_reason}")
 
-    video_file = operation.response.generated_videos[0].video
     print("Downloading generated video...")
-    return client.files.download(file=video_file)
+    response = requests.get(generation.assets.video, stream=True)
+    response.raise_for_status()
+    return response.content
 
 
 # ── Lyria: BGM generation ────────────────────────────────────────────────────
@@ -122,25 +122,11 @@ def compose_with_bgm(video_path: str, audio_path: str, mime_type: str, output_pa
 
     subprocess.run(
         ["ffmpeg", "-y", "-i", video_path] + audio_flags + [
-            "-vf", "crop=ih*9/16:ih,scale=1080:1920",
-            "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+            "-c:v", "copy",
             "-c:a", "aac", "-b:a", "192k",
             "-shortest",
             output_path,
         ],
-        check=True,
-        capture_output=True,
-    )
-
-
-def convert_to_vertical(input_path: str, output_path: str) -> None:
-    print("Converting to vertical 9:16 (FFmpeg)...")
-    subprocess.run(
-        ["ffmpeg", "-y", "-i", input_path,
-         "-vf", "crop=ih*9/16:ih,scale=1080:1920",
-         "-c:v", "libx264", "-crf", "18", "-preset", "fast",
-         "-an",
-         output_path],
         check=True,
         capture_output=True,
     )
@@ -184,17 +170,23 @@ def main() -> None:
             "Get your key from https://aistudio.google.com/apikey then run:\n"
             "  $env:GEMINI_API_KEY = 'your-key-here'"
         )
+    if not LUMAAI_API_KEY:
+        sys.exit(
+            "Error: LUMAAI_API_KEY is not set.\n"
+            "Get your key from https://lumalabs.ai/dream-machine/api"
+        )
 
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+    luma_client = LumaAI(auth_token=LUMAAI_API_KEY)
 
-    prompt, animal = generate_prompt(client)
-    video_bytes = generate_video(client, prompt)
+    prompt, animal = generate_prompt(gemini_client)
+    video_bytes = generate_video(luma_client, prompt)
 
     with open(RAW_VIDEO, "wb") as f:
         f.write(video_bytes)
 
     try:
-        audio_bytes, mime_type = generate_bgm(client, animal)
+        audio_bytes, mime_type = generate_bgm(gemini_client, animal)
         ext = ".wav" if ("L16" in mime_type or "pcm" in mime_type.lower()) else ".mp3"
         audio_path = TEMP_AUDIO + ext
         with open(audio_path, "wb") as f:
@@ -204,8 +196,7 @@ def main() -> None:
         os.unlink(RAW_VIDEO)
     except Exception as e:
         print(f"BGM skipped ({e}) — uploading video without audio.")
-        convert_to_vertical(RAW_VIDEO, OUTPUT_FILE)
-        os.unlink(RAW_VIDEO)
+        os.replace(RAW_VIDEO, OUTPUT_FILE)
 
     size_mb = os.path.getsize(OUTPUT_FILE) / 1024 / 1024
     print(f"Saved locally: {OUTPUT_FILE} ({size_mb:.1f} MB)\n")
