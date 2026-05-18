@@ -103,7 +103,7 @@ def title_from_filename(filename: str) -> str:
     if len(parts) == 3 and parts[0].isdigit():
         date = parts[0]
         animal = parts[2].replace("_", " ").title()
-        return f"{animal} | Auto Post {date[:4]}-{date[4:6]}-{date[6:]}"
+        return f"{animal} | Auto Post {date[:4]}-{date[4:6]}-{date[6:]} #Shorts"
     return stem
 
 

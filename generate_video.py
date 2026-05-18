@@ -68,6 +68,7 @@ def generate_video(client: genai.Client, prompt: str) -> bytes:
             number_of_videos=1,
             duration_seconds=8,
             enhance_prompt=True,
+            aspect_ratio="9:16",
         ),
     )
 
