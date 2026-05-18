@@ -11,7 +11,6 @@ from google.genai import types
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 import requests
-from lumaai import LumaAI
 import auth
 from drive_to_youtube import folder_id as drive_folder_id
 
@@ -62,27 +61,49 @@ def generate_prompt(client: genai.Client) -> tuple[str, str]:
 
 # ── Veo: video generation ────────────────────────────────────────────────────
 
-def generate_video(client: LumaAI, prompt: str) -> bytes:
+LUMA_API_BASE = "https://api.lumalabs.ai/dream-machine/v1"
+
+
+def _luma_headers() -> dict:
+    return {
+        "Authorization": f"Bearer {LUMAAI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+
+def generate_video(prompt: str) -> bytes:
     print("Submitting video generation request to LUMA...")
-    generation = client.generations.create(
-        prompt=prompt,
-        aspect_ratio="9:16",
-        model=LUMA_MODEL,
+    resp = requests.post(
+        f"{LUMA_API_BASE}/generations",
+        headers=_luma_headers(),
+        json={"prompt": prompt, "aspect_ratio": "9:16", "model": LUMA_MODEL},
+        timeout=30,
     )
+    resp.raise_for_status()
+    generation_id = resp.json()["id"]
 
     print("Waiting for video generation...")
-    while generation.state not in ("completed", "failed"):
+    while True:
         time.sleep(POLL_INTERVAL)
-        generation = client.generations.get(id=generation.id)
-        print(f"  State: {generation.state}")
-
-    if generation.state == "failed":
-        raise RuntimeError(f"LUMA generation failed: {generation.failure_reason}")
+        resp = requests.get(
+            f"{LUMA_API_BASE}/generations/{generation_id}",
+            headers=_luma_headers(),
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        state = data["state"]
+        print(f"  State: {state}")
+        if state == "completed":
+            break
+        if state == "failed":
+            raise RuntimeError(f"LUMA generation failed: {data.get('failure_reason')}")
 
     print("Downloading generated video...")
-    response = requests.get(generation.assets.video, stream=True)
-    response.raise_for_status()
-    return response.content
+    video_url = data["assets"]["video"]
+    video_resp = requests.get(video_url, stream=True, timeout=120)
+    video_resp.raise_for_status()
+    return video_resp.content
 
 
 # ── Lyria: BGM generation ────────────────────────────────────────────────────
@@ -178,10 +199,9 @@ def main() -> None:
     print(f"LUMAAI_API_KEY length: {len(LUMAAI_API_KEY)}, prefix: {LUMAAI_API_KEY[:8]}...")
 
     gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-    luma_client = LumaAI()  # LUMAAI_API_KEY を環境変数から自動読み込み
 
     prompt, animal = generate_prompt(gemini_client)
-    video_bytes = generate_video(luma_client, prompt)
+    video_bytes = generate_video(prompt)
 
     with open(RAW_VIDEO, "wb") as f:
         f.write(video_bytes)
